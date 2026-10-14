@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const data=JSON.parse(readFileSync(new URL('../data.json',import.meta.url)));
 assert.equal(data.products.length,2);
+assert.equal(new Set(data.industryGroups.flatMap(g=>g.members)).size,data.industries.length,'each industry needs one group');
+for(const industry of data.industries)assert.equal(data.industryGroups.filter(g=>g.members.includes(industry.id)).length,1,'industry belongs to exactly one group');
 const ids=new Set();
 for(const c of data.cases){
  assert(!ids.has(c.id),'duplicate case id');ids.add(c.id);
@@ -10,10 +12,30 @@ for(const c of data.cases){
  for(const key of ['id','customer','title','summary','problem','value','scene','source','verified'])assert.equal(typeof c[key],'string',key);
  assert.equal(c.steps.length,3,'three summarized steps required');
  assert(c.tools.length>0,'missing tools');
+ assert(c.tags.length>0,'missing overview tags');
+ assert(data.capabilities.includes(c.capability),'unknown capability');
+ assert(c.sector.length>0 && c.scenarioName.length>0,'missing classification');
+ for(const field of ['description','problem','value'])assert(c[field].length>=40,`${c.id}: ${field} too brief`);
+ assert(c.steps.every(step=>step.length>=15),`${c.id}: solution step too brief`);
+ assert(c.tools.every(t=>typeof t==='string'&&t.length>1),`${c.id}: malformed product tag`);
  assert(['实践案例','试用案例','场景演示','方案参考','适配参考'].includes(c.status));
  assert(c.title.length<=36,'title too long');
  assert(c.summary.length<=70,'summary too long');
  assert(!/https?:\/\/|ou_[a-z0-9]+|gh[op]_[A-Za-z0-9]+|未经允许|未获得客户/.test(JSON.stringify(c)),'public data must be sanitized');
 }
 for(const p of data.products)assert(data.cases.some(c=>c.product===p.id));
-console.log(`PASS: ${data.cases.length} cases, unique IDs, valid product/industry hierarchy, consistent fields, publication checks.`);
+const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+const filterCode=app.match(/function matchesFilters\([\s\S]*?\n}\n(?=const filterKeys)/)?.[0];
+assert(filterCode,'filter implementation missing');
+const matches=new Function('DATA','product','industry',`${filterCode};return matchesFilters`)(data,
+ id=>data.products.find(x=>x.id===id),id=>data.industries.find(x=>x.id===id));
+const wps=data.cases.filter(c=>c.product==='wps');
+assert.equal(wps.filter(c=>matches(c,{group:'manufacturing'})).length,12,'manufacturing facet');
+assert.equal(wps.filter(c=>matches(c,{group:'manufacturing',sector:'存储芯片'})).length,3,'combined industry facet');
+assert.equal(wps.filter(c=>matches(c,{tool:'WPS 智能文档'})).length,1,'verified intelligent document tag');
+assert.equal(data.cases.filter(c=>matches(c,{q:'不存在的场景XYZ'})).length,0,'empty search');
+assert(data.cases.some(c=>matches(c,{q:'产线堵片'})),'content search');
+assert(app.includes('01 / 场景描述')&&app.includes('02 / 痛点')&&app.includes('03 / 解决方案')&&app.includes('04 / 业务价值'),'detail structure');
+const page=readFileSync(new URL('../index.html',import.meta.url),'utf8');
+assert(page.includes('<title>Raymond殷圣尧的客户成功最佳实践案例</title>'),'homepage title');
+console.log(`PASS: ${data.cases.length} cases, complete sections and tags, combined filters, search, title, publication checks.`);
